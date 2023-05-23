@@ -7,12 +7,13 @@
 
 """
 # Standard imports
-import pandas as pd
-import numpy as np
-import talib as tl
 import os
 from os import environ as env
 from dotenv import load_dotenv
+
+import pandas as pd
+import numpy as np
+import talib as tl
 from binance import Client
 
 # Load API keys from env
@@ -49,7 +50,7 @@ data = pd.DataFrame(klines, columns=short_col_names)
 data["open_time"] = pd.to_datetime(data["open_time"], unit="ms")
 data["close_time"] = pd.to_datetime(data["close_time"], unit="ms")
 
-#--------------------------INPUTS--------------------------------
+# --------------------------INPUTS--------------------------------
 
 # "Pivot Period", min = 4, max = 30, "Used while calculating Pivot Points, checks left&right bars"
 prd: int = 10
@@ -63,15 +64,15 @@ ChannelW: int = 5
 # "Minimum Strength", minval = 1, "Channel must contain at least 2 Pivot Points"
 minstrength: int = 1
 
-# "Maximum Number of S/R", min = 1, max = 10, "Maximum number of Support/Resistance Channels to Show" - 1
+# "Maximum Number of S/R", min = 1, max = 10, "Max num of Support/Resistance Channels to Show" - 1
 maxnumsr: int = 6 - 1
 
-# "Loopback Period", min = 100, max = 400, "While calculating S/R levels it checks Pivots in Loopback Period"
+# "Loopback Period", min = 100, max = 400, "While calc S/R lvls checks Pivots in Loopback Period"
 loopback: int = 290
 
-# res_col = input(defval = color.new(color.red, 75), title = "Resistance Color", group = "Colors 🟡🟢🟣")
-# sup_col = input(defval = color.new(color.lime, 75), title = "Support Color", group = "Colors 🟡🟢🟣")
-# inch_col = input(defval = color.new(color.gray, 75), title = "Color When Price in Channel", group = "Colors 🟡🟢🟣")
+# res_col = input(color.new(color.red, 75), title = "Resistance Color", group = "Colors")
+# sup_col = input(color.new(color.lime, 75), title = "Support Color", group = "Colors")
+# inch_col = input(color.new(color.gray, 75), title = "Color When P in Chnl", group = "Colors")
 
 showpp: bool = False  # "Show Pivot Points"
 showsrbroken: bool = False  # "Show Broken Support/Resistance"
@@ -85,10 +86,26 @@ showthema2len: int = 200  # "ma2 length"
 showthema2type: str = "SMA"  # ["SMA", "EMA"]
 
 
-#--------------------------FUNCIONS------------------------------
+# --------------------------FUNCIONS------------------------------
 
 # find/create SR channel of a pivot point
-def get_sr_vals(ind: int, _pivotvals: np.ndarray, _cwidth: np.ndarray, _bar_index: int) -> tuple:
+def get_sr_vals(
+    ind: int, _pivotvals: np.ndarray, _cwidth: np.ndarray, _bar_index: int
+) -> tuple:
+    """
+    Find/create a support/resistance (SR) channel for a given pivot point.
+
+    Parameters:
+        ind (int): Index of the pivot point in the _pivotvals array.
+        _pivotvals (np.ndarray): Array of pivot values.
+        _cwidth (np.ndarray): Array of channel widths.
+        _bar_index (int): Index of the current bar.
+
+    Returns:
+        tuple: A tuple containing the high value of the SR channel, the low value
+               of the SR channel, and the number of pivot points in the channel.
+
+    """
     lo: np.double = _pivotvals[ind]
     hi: np.double = lo
     numpp: int = 0
@@ -106,16 +123,40 @@ def get_sr_vals(ind: int, _pivotvals: np.ndarray, _cwidth: np.ndarray, _bar_inde
 
 
 # keep old SR channels and calculate/sort new channels if we met new pivot point
-def changeit(x: int, y: int):
-    tmp: np.double = suportresistance[y * 2]
-    suportresistance[y * 2] = suportresistance[x * 2]
-    suportresistance[x * 2] = tmp
-    tmp = suportresistance[(y * 2) + 1]
-    suportresistance[(y * 2) + 1] = suportresistance[(x * 2) + 1]
-    suportresistance[(x * 2) + 1] = tmp
+def changeit(x: int, y: int, _suportresistance: np.ndarray):
+    """
+    Swap the values of SR channels at indices x and y, in the _suportresistance array.
+
+    Parameters:
+        x (int): Index of the first SR channel.
+        y (int): Index of the second SR channel.
+        _suportresistance (np.ndarray): Array containing the SR channels.
+
+    Returns:
+        None
+
+    """
+    tmp: np.double = _suportresistance[y * 2]
+    _suportresistance[y * 2] = _suportresistance[x * 2]
+    _suportresistance[x * 2] = tmp
+    tmp = _suportresistance[(y * 2) + 1]
+    _suportresistance[(y * 2) + 1] = _suportresistance[(x * 2) + 1]
+    _suportresistance[(x * 2) + 1] = tmp
 
 
 def get_level(ind: int, _suportresistance: np.ndarray) -> np.double:
+    """
+    Retrieve the level at the specified index from the _suportresistance array.
+
+    Parameters:
+        ind (int): Index of the level to retrieve.
+        _suportresistance (np.ndarray): Array containing the support/resistance levels.
+
+    Returns:
+        np.double: The level at the specified index, or None if the index is out of range
+                   or the level is 0.
+
+    """
     ret: np.double = None
     if ind < len(_suportresistance):
         if _suportresistance[ind] != 0:
@@ -124,21 +165,47 @@ def get_level(ind: int, _suportresistance: np.ndarray) -> np.double:
 
 
 def get_color(ind: int, _close: np.double, _suportresistance: np.ndarray) -> str:
+    """
+    Determine color for the specified level index based on its relationship with the close price.
+
+    Parameters:
+        ind (int): Index of the level to determine the color for.
+        _close (np.double): The close price value.
+        _suportresistance (np.ndarray): Array containing the support/resistance levels.
+
+    Returns:
+        str: The color string corresponding to the level's relationship with the close price,
+             or None if the index is out of range or the level is 0.
+
+    """
     ret: str = None
     if ind < len(_suportresistance):
         if _suportresistance[ind] != 0:
             ret = (
                 "res_col"
-                if _suportresistance[ind] > _close and _suportresistance[ind + 1] > _close
+                if _suportresistance[ind] > _close
+                and _suportresistance[ind + 1] > _close
                 else "sup_col"
-                if _suportresistance[ind] < _close and _suportresistance[ind + 1] < _close
+                if _suportresistance[ind] < _close
+                and _suportresistance[ind + 1] < _close
                 else "inch_col"
             )
     return ret
 
 
 def exclude_repeats(pv: np.ndarray, smpl: np.ndarray, sp: int) -> np.ndarray:
-    """Exclude repeating values"""
+    """
+    Exclude repeated values in the pivot array by setting them to NaN.
+
+    Parameters:
+        pv (np.ndarray): Array of pivot values.
+        smpl (np.ndarray): Array used for comparison to identify repeated values.
+        sp (int): Span length for comparison.
+
+    Returns:
+        np.ndarray: Array with repeated values set to NaN.
+
+    """
     for i in range(sp, len(pv) - sp):
         for j in range(sp):
             if pv[i] == smpl[i + 1 : i + 1 + sp][j]:
@@ -149,6 +216,18 @@ def exclude_repeats(pv: np.ndarray, smpl: np.ndarray, sp: int) -> np.ndarray:
 
 
 def pivothigh(high: np.ndarray, left: int, right: int) -> np.ndarray:
+    """
+    Find pivot highs in the given array of high values.
+
+    Parameters:
+        high (np.ndarray): Array of high values.
+        left (int): Number of bars to the left for comparison.
+        right (int): Number of bars to the right for comparison.
+
+    Returns:
+        np.ndarray: Array containing pivot high values, with non-pivot values set to NaN.
+
+    """
     pivots = np.roll(tl.MAX(high, left + 1 + right), -right)
     pivots[pivots != high] = np.NaN
 
@@ -158,6 +237,18 @@ def pivothigh(high: np.ndarray, left: int, right: int) -> np.ndarray:
 
 
 def pivotlow(low: np.ndarray, left: int, right: int) -> np.ndarray:
+    """
+    Find pivot lows in the given array of low values.
+
+    Parameters:
+        low (np.ndarray): Array of low values.
+        left (int): Number of bars to the left for comparison.
+        right (int): Number of bars to the right for comparison.
+
+    Returns:
+        np.ndarray: Array containing pivot low values, with non-pivot values set to NaN.
+
+    """
     pivots = np.roll(tl.MIN(low, left + 1 + right), -right)
     pivots[pivots != low] = np.NaN
 
@@ -169,7 +260,7 @@ def pivotlow(low: np.ndarray, left: int, right: int) -> np.ndarray:
 def main():
 
     close: np.ndarray = data["close"].to_numpy(dtype=np.double)
-    open: np.ndarray = data["open"].to_numpy(dtype=np.double)
+    _open: np.ndarray = data["open"].to_numpy(dtype=np.double)
     high: np.ndarray = data["high"].to_numpy(dtype=np.double)
     low: np.ndarray = data["low"].to_numpy(dtype=np.double)
 
@@ -186,7 +277,6 @@ def main():
         else None
     )
 
-
     ma2 = (
         (
             tl.SMA(close, showthema2len)
@@ -197,25 +287,21 @@ def main():
         else None
     )
 
-
     # get Pivot High/low
-    src1: np.ndarray = high if ppsrc == "High/Low" else np.maximum(close, open)
-    src2: np.ndarray = low if ppsrc == "High/Low" else np.minimum(close, open)
+    src1: np.ndarray = high if ppsrc == "High/Low" else np.maximum(close, _open)
+    src2: np.ndarray = low if ppsrc == "High/Low" else np.minimum(close, _open)
 
     ph: np.ndarray = pivothigh(src1, prd, prd)
     pl: np.ndarray = pivotlow(src2, prd, prd)
-
 
     # calculate maximum S/R channel width
     prdhighest: np.ndarray = tl.MAX(high, 300)
     prdlowest: np.ndarray = tl.MIN(low, 300)
     cwidth: np.ndarray = (prdhighest - prdlowest) * ChannelW / 100
 
-
     # get/keep Pivot levels
     pivotvals: np.ndarray = np.zeros(0, dtype=np.double)
     pivotlocs: np.ndarray = np.zeros(0, dtype=np.int)
-
 
     for bar_index, (_ph, _pl, ph_nan, pl_nan) in enumerate(
         zip(ph, pl, np.isnan(ph), np.isnan(pl))
@@ -223,7 +309,6 @@ def main():
         if not ph_nan or not pl_nan:
             pivotvals = np.insert(pivotvals, 0, [_ph if not ph_nan else _pl])
             pivotlocs = np.insert(pivotlocs, 0, [bar_index])
-
 
     for x in reversed(range(len(pivotvals))):
         bar_index = len(high) - 1
@@ -254,12 +339,14 @@ def main():
                 s: int = 0
 
                 for y2 in range(loopback + 1):
-                    # TODO: rewrite for each HL after adding for loop
                     if len(high[:bar_index]) - 1 < y2:
                         continue
                     if (
-                        high[:bar_index][-y2 - 1] <= h and high[:bar_index][-y2 - 1] >= l
-                    ) or (low[:bar_index][-y2 - 1] <= h and low[:bar_index][-y2 - 1] >= l):
+                        high[:bar_index][-y2 - 1] <= h
+                        and high[:bar_index][-y2 - 1] >= l
+                    ) or (
+                        low[:bar_index][-y2 - 1] <= h and low[:bar_index][-y2 - 1] >= l
+                    ):
                         s += 1
                 supres[x2 * 3] = supres[x2 * 3] + s
 
@@ -268,7 +355,7 @@ def main():
 
             # get strongest SRs
             src: int = 0
-            for x3 in range(len(pivotvals)):
+            for _ in range(len(pivotvals)):
                 stv: np.double = -1.0  # value
                 stl: int = -1  # location
                 for y3 in range(len(pivotvals)):
@@ -285,9 +372,9 @@ def main():
 
                     # make included pivot points' strength zero
                     for y32 in range(len(pivotvals)):
-                        if (supres[y32 * 3 + 1] <= hh and supres[y32 * 3 + 1] >= ll) or (
-                            supres[y32 * 3 + 2] <= hh and supres[y32 * 3 + 2] >= ll
-                        ):
+                        if (
+                            supres[y32 * 3 + 1] <= hh and supres[y32 * 3 + 1] >= ll
+                        ) or (supres[y32 * 3 + 2] <= hh and supres[y32 * 3 + 2] >= ll):
                             supres[y32 * 3] = -1
 
                     src += 1
@@ -299,8 +386,7 @@ def main():
                     if stren[y4] > stren[x4]:
                         tmp = stren[y4]
                         stren[y4] = stren[x4]
-                        changeit(x4, y4)
-
+                        changeit(x4, y4, suportresistance)
 
     top_level: np.ndarray = np.zeros(10, dtype=np.double)
     bot_level: np.ndarray = np.zeros(10, dtype=np.double)
@@ -318,15 +404,13 @@ def main():
     top_level = np.where(top_level != 0, top_level, np.nan)
     bot_level = np.where(bot_level != 0, bot_level, np.nan)
 
-
-
     res = pd.DataFrame(
         {
             "top_level": top_level,
             "bot_level": bot_level,
         }
     )
-    res.dropna().to_csv('sup_res_channels-ATOMUSDT-15m.csv', index = None, header=True)
+    res.dropna().to_csv("sup_res_channels-ATOMUSDT-15m.csv", index=None, header=True)
 
 
 if __name__ == "__main__":
